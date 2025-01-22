@@ -1,0 +1,7 @@
+# Ignore node_modules folder
+node_modules/
+
+# Ignore environment files
+.env
+gymvisa-d2c4a-firebase-adminsdk-lrk55-2999a000c7.json
+.vercel
