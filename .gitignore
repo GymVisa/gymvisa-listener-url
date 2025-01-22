@@ -3,5 +3,5 @@ node_modules/
 
 # Ignore environment files
 .env
-gymvisa.json
+api/gymvisa.json
 .vercel
