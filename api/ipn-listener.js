@@ -1,108 +1,111 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const admin = require("firebase-admin");
-const axios = require("axios");
-const { URL } = require("url"); 
-require("dotenv").config();
-const path = require("path");
-const fs = require("fs");
+const express = require('express');
+const bodyParser = require('body-parser');
+const admin = require('firebase-admin');
+const { URL } = require('url'); // Node.js built-in URL module
+require('dotenv').config();
 
-const serviceAccountPath = path.join(__dirname, "gymvisa.json");
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
-try {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
-  console.log("Firebase Admin SDK initialized successfully.");
-} catch (error) {
-  console.error("Error initializing Firebase Admin SDK:", error);
-  process.exit(1);
-}
+// Initialize Firebase Admin SDK
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 const db = admin.firestore();
+
 const app = express();
 app.use(bodyParser.json());
 
-module.exports = async (req, res) => {
+app.get('/api/ipn-listener', async (req, res) => {
   try {
-    console.log("IPN Listener invoked");
+    const listenerUrl = req.query.url;
 
-    // Ensure request is POST (as per documentation)
-    if (req.method !== "POST") {
-      console.error("Invalid request method");
-      return res.status(405).send("Method Not Allowed");
-    }
-
-    // Extract URL from the body (since it's a POST request)
-    const listenerUrl = req.body.url;
     if (!listenerUrl) {
-      console.error("Missing `url` parameter in request body");
-      return res.status(400).send("Missing `url` parameter");
+      console.error('Missing `url` parameter');
+      return res.status(400).send('Missing `url` parameter');
     }
 
-    console.log("Received URL:", listenerUrl);
+    console.log('Received URL:', listenerUrl);
 
-    // Parse the URL correctly
     const parsedUrl = new URL(listenerUrl);
-    const pathSegments = parsedUrl.pathname.split("/");
+    const pathSegments = parsedUrl.pathname.split('/');
 
-    if (pathSegments.length < 5) {
-      console.error("Invalid URL format");
-      return res.status(400).send("Invalid URL format");
-    }
+    console.log(pathSegments);
 
-    const MerchantId = pathSegments[pathSegments.length - 3]; // Dynamically extracting last three values
-    const StoreId = pathSegments[pathSegments.length - 2];
-    const TransactionReferenceNumber = pathSegments[pathSegments.length - 1];
+    const MerchantId = pathSegments[5];
+    const StoreId = pathSegments[6];
+    const TransactionReferenceNumber = pathSegments[7];
 
     console.log(`MerchantId: ${MerchantId}`);
     console.log(`StoreId: ${StoreId}`);
     console.log(`TransactionReferenceNumber: ${TransactionReferenceNumber}`);
 
-    if (!MerchantId || !StoreId || !TransactionReferenceNumber) {
-      console.error("Missing MerchantId, StoreId, or TransactionReferenceNumber");
-      return res.status(400).send("Invalid URL format");
-    }
-
     if (MerchantId !== process.env.MERCHANT_ID || StoreId !== process.env.STORE_ID) {
-      console.error("Invalid MerchantId or StoreId");
-      return res.status(400).send("Invalid Merchant or Store ID");
+      console.error('Invalid MerchantId or StoreId');
+      return res.status(400).send('Invalid Merchant or Store ID');
     }
 
-    // Fetch transaction status
+    const axios = require('axios');
     const transactionResponse = await axios.get(listenerUrl);
 
     if (!transactionResponse.data) {
-      console.error("Empty response from transaction status URL");
-      return res.status(400).send("Failed to retrieve transaction details");
+      console.error('Empty response from transaction status URL');
+      return res.status(400).send('Failed to retrieve transaction details');
     }
 
-    const transactionData = transactionResponse.data; // No need for JSON.parse
+    const transactionData = JSON.parse(transactionResponse.data);
+    console.log('Transaction Data:', transactionData);
 
-    console.log("Transaction Data:", transactionData);
-
-    // Firestore reference
-    const transactionRef = db.collection("Transactions").doc(TransactionReferenceNumber);
+    const transactionRef = db.collection('Transactions').doc(TransactionReferenceNumber);
     const transactionSnapshot = await transactionRef.get();
 
     if (!transactionSnapshot.exists) {
       console.error(`Transaction ${TransactionReferenceNumber} not found`);
-      return res.status(404).send("Transaction not found");
+      return res.status(404).send('Transaction not found');
     }
 
-    // Update transaction status
+    const transactionDoc = transactionSnapshot.data();
     await transactionRef.update({
       Status: transactionData.TransactionStatus,
       UpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      transactionId: transactionData.TransactionId,
+      transactionId: transactionData.TransactionId
     });
 
     console.log(`Transaction ${TransactionReferenceNumber} updated successfully`);
-    res.status(200).send("IPN Processed Successfully");
 
+    if (transactionData.TransactionStatus === 'Initiated') {
+      const userId = transactionDoc.UserId; 
+      const subscriptionPlan = transactionDoc.Subscription; 
+
+      if (!userId || !subscriptionPlan) {
+        console.error(`Missing UserId or Subscription in Transaction ${TransactionReferenceNumber}`);
+        return res.status(400).send('Transaction data is incomplete');
+      }
+
+      const userRef = db.collection('User').doc(userId);
+
+      const now = new Date();
+      const subscriptionStartDate = admin.firestore.Timestamp.fromDate(now);
+      const subscriptionEndDate = admin.firestore.Timestamp.fromDate(new Date(now.setDate(now.getDate() + 20)));
+
+      await userRef.update({
+        Subscription: subscriptionPlan,
+        SubscriptionStartDate: subscriptionStartDate,
+        SubscriptionEndDate: subscriptionEndDate
+      });
+
+      console.log(`User ${userId} subscription updated successfully`);
+    }
+
+    res.status(200).send('IPN Processed Successfully');
   } catch (error) {
-    console.error("Error processing IPN:", error);
-    res.status(500).send("Internal Server Error");
+    console.error('Error processing IPN:', error);
+    res.status(500).send('Internal Server Error');
   }
-};
+});
+
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`IPN Listener running on port ${PORT}`);
+});
