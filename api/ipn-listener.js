@@ -73,7 +73,7 @@ app.get('/api/ipn-listener', async (req, res) => {
 
     console.log(`Transaction ${TransactionReferenceNumber} updated successfully`);
 
-    if (transactionData.TransactionStatus === 'Initiated') {
+    if (transactionData.TransactionStatus === 'Paid') {
       const userId = transactionDoc.UserId; 
       const subscriptionPlan = transactionDoc.Subscription; 
 
