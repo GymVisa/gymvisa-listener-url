@@ -16,7 +16,7 @@ const db = admin.firestore();
 const app = express();
 app.use(bodyParser.json());
 
-app.post('/api/ipn-listener', async (req, res) => {
+app.get('/api/ipn-listener', async (req, res) => {
   try {
     const listenerUrl = req.query.url;
 
