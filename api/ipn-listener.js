@@ -1,12 +1,12 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-const { URL } = require('url'); // Node.js built-in URL module
+const { URL } = require('url');
 require('dotenv').config();
+const axios = require('axios');
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
-// Initialize Firebase Admin SDK
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -16,7 +16,7 @@ const db = admin.firestore();
 const app = express();
 app.use(bodyParser.json());
 
-app.get('/api/ipn-listener', async (req, res) => {
+app.post('/api/ipn-listener', async (req, res) => {
   try {
     const listenerUrl = req.query.url;
 
@@ -29,12 +29,10 @@ app.get('/api/ipn-listener', async (req, res) => {
 
     const parsedUrl = new URL(listenerUrl);
     const pathSegments = parsedUrl.pathname.split('/');
-
-    console.log(pathSegments);
-
-    const MerchantId = pathSegments[5];
-    const StoreId = pathSegments[6];
-    const TransactionReferenceNumber = pathSegments[7];
+    
+    const MerchantId = pathSegments[pathSegments.length - 3];
+    const StoreId = pathSegments[pathSegments.length - 2];
+    const TransactionReferenceNumber = pathSegments[pathSegments.length - 1];
 
     console.log(`MerchantId: ${MerchantId}`);
     console.log(`StoreId: ${StoreId}`);
@@ -45,7 +43,6 @@ app.get('/api/ipn-listener', async (req, res) => {
       return res.status(400).send('Invalid Merchant or Store ID');
     }
 
-    const axios = require('axios');
     const transactionResponse = await axios.get(listenerUrl);
 
     if (!transactionResponse.data) {
@@ -53,7 +50,7 @@ app.get('/api/ipn-listener', async (req, res) => {
       return res.status(400).send('Failed to retrieve transaction details');
     }
 
-    const transactionData = JSON.parse(transactionResponse.data);
+    const transactionData = transactionResponse.data;
     console.log('Transaction Data:', transactionData);
 
     const transactionRef = db.collection('Transactions').doc(TransactionReferenceNumber);
@@ -65,17 +62,19 @@ app.get('/api/ipn-listener', async (req, res) => {
     }
 
     const transactionDoc = transactionSnapshot.data();
+
     await transactionRef.update({
-      Status: transactionData.TransactionStatus,
+      Status: transactionData.TransactionStatus || "Unknown",
       UpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      transactionId: transactionData.TransactionId
+      transactionId: transactionData.TransactionId || "N/A"
     });
+    
 
     console.log(`Transaction ${TransactionReferenceNumber} updated successfully`);
 
-    if (transactionData.TransactionStatus === 'Initiated') {
-      const userId = transactionDoc.UserId; 
-      const subscriptionPlan = transactionDoc.Subscription; 
+    if (transactionData.TransactionStatus === 'Paid' || transactionData.TransactionStatus === 'Initiated') {
+      const userId = transactionDoc.UserId;
+      const subscriptionPlan = transactionDoc.Subscription;
 
       if (!userId || !subscriptionPlan) {
         console.error(`Missing UserId or Subscription in Transaction ${TransactionReferenceNumber}`);
@@ -84,14 +83,16 @@ app.get('/api/ipn-listener', async (req, res) => {
 
       const userRef = db.collection('User').doc(userId);
 
+      // Calculate subscription dates
       const now = new Date();
       const subscriptionStartDate = admin.firestore.Timestamp.fromDate(now);
       const subscriptionEndDate = admin.firestore.Timestamp.fromDate(new Date(now.setDate(now.getDate() + 20)));
 
+      // Update user subscription
       await userRef.update({
         Subscription: subscriptionPlan,
         SubscriptionStartDate: subscriptionStartDate,
-        SubscriptionEndDate: subscriptionEndDate
+        SubscriptionEndDate: subscriptionEndDate,
       });
 
       console.log(`User ${userId} subscription updated successfully`);
