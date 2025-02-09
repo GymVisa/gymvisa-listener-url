@@ -67,7 +67,7 @@ app.get('/api/ipn-listener', async (req, res) => {
     const transactionDoc = transactionSnapshot.data();
     await transactionRef.update({
       Status: transactionData.TransactionStatus,
-      UpdatedAt: 'Hit By Alfalah Bank',
+      UpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       transactionId: transactionData.TransactionId
     });
 
