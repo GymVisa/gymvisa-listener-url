@@ -1,20 +1,14 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-const axios = require('axios'); // Move axios import to top
+const axios = require('axios');
 const { URL } = require('url');
 require('dotenv').config();
 
-// Add error handling for environment variables
+// Parse Firebase service account from environment
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
-// Initialize Firebase Admin SDK
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
-
-
-// Initialize Firebase Admin SDK with error handling
+// Initialize Firebase Admin SDK once
 try {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
@@ -34,16 +28,14 @@ app.get('/api/ipn-listener', async (req, res) => {
     const listenerUrl = req.query.url;
 
     if (!listenerUrl) {
-      console.error('Missing ⁠ url ⁠ parameter');
-      return res.status(400).send('Missing ⁠ url ⁠ parameter');
+      console.error('Missing `url` parameter');
+      return res.status(400).send('Missing `url` parameter');
     }
 
     console.log('Received URL:', listenerUrl);
 
     const parsedUrl = new URL(listenerUrl);
     const pathSegments = parsedUrl.pathname.split('/');
-
-    console.log(pathSegments);
 
     const MerchantId = pathSegments[5];
     const StoreId = pathSegments[6];
@@ -58,7 +50,6 @@ app.get('/api/ipn-listener', async (req, res) => {
       return res.status(400).send('Invalid Merchant or Store ID');
     }
 
-    const axios = require('axios');
     const transactionResponse = await axios.get(listenerUrl);
 
     if (!transactionResponse.data) {
@@ -81,7 +72,7 @@ app.get('/api/ipn-listener', async (req, res) => {
     await transactionRef.update({
       Status: transactionData.TransactionStatus,
       UpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      transactionId: transactionData.TransactionId
+      transactionId: transactionData.TransactionId,
     });
 
     console.log(`Transaction ${TransactionReferenceNumber} updated successfully`);
@@ -95,41 +86,40 @@ app.get('/api/ipn-listener', async (req, res) => {
         return res.status(400).send('Transaction data is incomplete');
       }
 
- 
-        if (subscriptionPlan === 'Credits') {
-          // --- PURCHASE CREDITS LOGIC ---
-          const creditsToAdd = transactionDoc.Credits || 0;
-          if (!creditsToAdd || creditsToAdd <= 0) {
-            console.error(`No credits to add for Transaction ${TransactionReferenceNumber}`);
-            return res.status(400).send('No credits to add');
-          }
-
-          const userRef = db.collection('User').doc(userId);
-          await db.runTransaction(async (t) => {
-            const userSnap = await t.get(userRef);
-            if (!userSnap.exists) throw new Error('User not found');
-            const userData = userSnap.data();
-            const currentCredits = userData.credits || 0;
-            t.update(userRef, { credits: currentCredits + creditsToAdd });
-          });
-
-          console.log(`Added ${creditsToAdd} credits to user ${userId}`);
-        } else {
-          // --- SUBSCRIPTION LOGIC ---
-          const userRef = db.collection('User').doc(userId);
-
-          const now = new Date();
-          const subscriptionStartDate = admin.firestore.Timestamp.fromDate(now);
-          const subscriptionEndDate = admin.firestore.Timestamp.fromDate(new Date(now.setDate(now.getDate() + 20)));
-
-          await userRef.update({
-            Subscription: subscriptionPlan,
-            SubscriptionStartDate: subscriptionStartDate,
-            SubscriptionEndDate: subscriptionEndDate
-          });
-
-          console.log(`User ${userId} subscription updated successfully`);
+      if (subscriptionPlan === 'Credits') {
+        // --- PURCHASE CREDITS LOGIC ---
+        const creditsToAdd = transactionDoc.Credits || 0;
+        if (!creditsToAdd || creditsToAdd <= 0) {
+          console.error(`No credits to add for Transaction ${TransactionReferenceNumber}`);
+          return res.status(400).send('No credits to add');
         }
+
+        const userRef = db.collection('User').doc(userId);
+        await db.runTransaction(async (t) => {
+          const userSnap = await t.get(userRef);
+          if (!userSnap.exists) throw new Error('User not found');
+          const userData = userSnap.data();
+          const currentCredits = userData.credits || 0;
+          t.update(userRef, { credits: currentCredits + creditsToAdd });
+        });
+
+        console.log(`Added ${creditsToAdd} credits to user ${userId}`);
+      } else {
+        // --- SUBSCRIPTION LOGIC ---
+        const userRef = db.collection('User').doc(userId);
+
+        const now = new Date();
+        const subscriptionStartDate = admin.firestore.Timestamp.fromDate(now);
+        const subscriptionEndDate = admin.firestore.Timestamp.fromDate(new Date(now.setDate(now.getDate() + 20)));
+
+        await userRef.update({
+          Subscription: subscriptionPlan,
+          SubscriptionStartDate: subscriptionStartDate,
+          SubscriptionEndDate: subscriptionEndDate,
+        });
+
+        console.log(`User ${userId} subscription updated successfully`);
+      }
     }
 
     res.status(200).send('IPN Processed Successfully');
@@ -139,7 +129,7 @@ app.get('/api/ipn-listener', async (req, res) => {
   }
 });
 
-// Add graceful shutdown handling
+// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   process.exit(0);
@@ -154,4 +144,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`IPN Listener running on port ${PORT}`);
 });
-
